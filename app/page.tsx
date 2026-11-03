@@ -9,8 +9,6 @@ import {
   onAuthStateChanged,
   reload,
   setPersistence,
-  sendEmailVerification,
-  sendPasswordResetEmail,
   signInWithPopup,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
@@ -26,6 +24,7 @@ import { LandingPage } from "../components/pages/LandingPage";
 import { AutoShowcase } from "../components/pages/AutoShowcase";
 import { ActionFeedback } from "../components/ActionFeedback";
 import { registerPushNotifications } from "../lib/push-notifications";
+import { sendCustomAuthEmail } from "../lib/custom-auth-email";
 
 type View = "landing" | "dashboard";
 type Lead = {
@@ -709,10 +708,8 @@ export default function Home() {
         throw new Error(maintenance.message);
       }
       if (authMode === "reset") {
-        await sendPasswordResetEmail(auth, authEmail);
-        setAuthMessage(
-          "Password reset link sent. Check your inbox and spam folder.",
-        );
+        const result = await sendCustomAuthEmail(authEmail, "reset");
+        setAuthMessage(result.message || "If an account exists for that email, a password reset link is on its way. Check your inbox and spam folder.");
         return;
       }
 
@@ -759,7 +756,7 @@ export default function Home() {
         !credential.user.emailVerified
       ) {
         pendingVerificationRef.current = true;
-        await sendEmailVerification(credential.user);
+        await sendCustomAuthEmail(credential.user.email ?? authEmail, "verify");
         setAuthMode("verify");
         setAuthMessage(
           `We sent a verification link to ${credential.user.email ?? authEmail}.`,
@@ -795,7 +792,9 @@ export default function Home() {
           "An account already exists with another sign-in method.",
       };
       setAuthError(
-        messages[code] || "Authentication failed. Please check your details.",
+        (authMode === "reset" || authMode === "signup") && error instanceof Error && !code
+          ? error.message
+          : messages[code] || "Authentication failed. Please check your details.",
       );
       setAuthReady(true);
       setView("landing");
@@ -862,7 +861,7 @@ export default function Home() {
     setAuthError("");
     setAuthMessage("");
     try {
-      await sendEmailVerification(user);
+      await sendCustomAuthEmail(user.email ?? authEmail, "verify");
       setAuthMessage(
         `A new verification link was sent to ${user.email ?? authEmail}.`,
       );
