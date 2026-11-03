@@ -5,16 +5,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const express = require("express");
 const QRCode = require("qrcode");
+const chromium = require("@sparticuz/chromium").default;
 const { cert, getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
-process.env.PUPPETEER_CACHE_DIR = path.join(
-  __dirname,
-  "puppeteer-cache",
-);
-const puppeteer = require("puppeteer");
 const { Client, LocalAuth } = require("whatsapp-web.js");
-const chromeExecutablePath =
-  process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath();
 
 const port = Number(process.env.PORT) || 10000;
 const apiKey = process.env.WHATSAPP_SERVER_API_KEY;
@@ -105,58 +99,64 @@ function createWhatsAppClient(uid) {
     error: null,
     initialization: null,
   };
-  const client = new Client({
-    authStrategy: new LocalAuth({ clientId, dataPath: authPath }),
-    puppeteer: {
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-      ],
-      executablePath: chromeExecutablePath,
-    },
-  });
-
-  runtime.client = client;
   clients.set(uid, runtime);
 
-  client.on("qr", (qr) => {
-    runtime.state = "qr";
-    runtime.error = null;
-    QRCode.toDataURL(qr)
-      .then((dataUrl) => {
-        runtime.qrDataUrl = dataUrl;
-      })
-      .catch((error) => {
-        runtime.error = "Could not render the WhatsApp QR code.";
-        console.error("WhatsApp QR rendering failed:", error);
-      });
-  });
-  client.on("authenticated", () => {
-    runtime.state = "connecting";
-    runtime.qrDataUrl = null;
-  });
-  client.on("ready", () => {
-    runtime.state = "connected";
-    runtime.qrDataUrl = null;
-    runtime.error = null;
-    console.info(`WhatsApp session ready for ${clientId}.`);
-  });
-  client.on("auth_failure", (message) => {
-    runtime.state = "disconnected";
-    runtime.qrDataUrl = null;
-    runtime.error = "WhatsApp authentication failed. Retry the connection.";
-    console.error(`WhatsApp authentication failed for ${clientId}:`, message);
-  });
-  client.on("disconnected", (reason) => {
-    runtime.state = "disconnected";
-    runtime.qrDataUrl = null;
-    runtime.error = "WhatsApp disconnected. Retry the connection.";
-    console.warn(`WhatsApp disconnected for ${clientId}:`, reason);
-  });
+  runtime.initialization = (async () => {
+    const executablePath =
+      process.env.PUPPETEER_EXECUTABLE_PATH || (await chromium.executablePath());
+    const client = new Client({
+      authStrategy: new LocalAuth({ clientId, dataPath: authPath }),
+      puppeteer: {
+        headless: true,
+        args: [
+          ...chromium.args,
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+        ],
+        executablePath,
+      },
+    });
+    runtime.client = client;
 
-  runtime.initialization = client.initialize().catch((error) => {
+    client.on("qr", (qr) => {
+      runtime.state = "qr";
+      runtime.error = null;
+      QRCode.toDataURL(qr)
+        .then((dataUrl) => {
+          runtime.qrDataUrl = dataUrl;
+        })
+        .catch((error) => {
+          runtime.error = "Could not render the WhatsApp QR code.";
+          console.error("WhatsApp QR rendering failed:", error);
+        });
+    });
+    client.on("authenticated", () => {
+      runtime.state = "connecting";
+      runtime.qrDataUrl = null;
+    });
+    client.on("ready", () => {
+      runtime.state = "connected";
+      runtime.qrDataUrl = null;
+      runtime.error = null;
+      console.info(`WhatsApp session ready for ${clientId}.`);
+    });
+    client.on("auth_failure", (message) => {
+      runtime.state = "disconnected";
+      runtime.qrDataUrl = null;
+      runtime.error = "WhatsApp authentication failed. Retry the connection.";
+      console.error(`WhatsApp authentication failed for ${clientId}:`, message);
+    });
+    client.on("disconnected", (reason) => {
+      runtime.state = "disconnected";
+      runtime.qrDataUrl = null;
+      runtime.error = "WhatsApp disconnected. Retry the connection.";
+      console.warn(`WhatsApp disconnected for ${clientId}:`, reason);
+    });
+
+    console.info(`Using bundled Chromium executable at ${executablePath}.`);
+    await client.initialize();
+  })().catch((error) => {
     runtime.state = "disconnected";
     runtime.qrDataUrl = null;
     runtime.error = "WhatsApp could not start. Check the Render service logs and try again.";
@@ -171,7 +171,8 @@ async function resetWhatsAppClient(uid) {
   if (!runtime) return;
   clients.delete(uid);
   try {
-    await runtime.client.destroy();
+    await runtime.initialization;
+    await runtime.client?.destroy();
   } catch (error) {
     console.warn("WhatsApp client shutdown failed:", error);
   }
@@ -321,9 +322,7 @@ app.use((error, _request, response, _next) => {
 const server = app.listen(port, "0.0.0.0", () => {
   console.info(`WhatsApp service listening on port ${port}.`);
   console.info(`WhatsApp LocalAuth data path: ${authPath}`);
-  console.info(
-    `Puppeteer Chrome executable: ${chromeExecutablePath} (exists: ${fs.existsSync(chromeExecutablePath)}).`,
-  );
+  console.info("WhatsApp sessions will use the bundled Chromium binary.");
 });
 
 async function shutdown(signal) {
@@ -331,9 +330,11 @@ async function shutdown(signal) {
   server.close();
   await Promise.all(
     [...clients.values()].map((runtime) =>
-      runtime.client.destroy().catch((error) => {
-        console.warn("WhatsApp client shutdown failed:", error);
-      }),
+      runtime.initialization
+        .then(() => runtime.client?.destroy())
+        .catch((error) => {
+          console.warn("WhatsApp client shutdown failed:", error);
+        }),
     ),
   );
   process.exit(0);
