@@ -933,9 +933,7 @@ export default function Home() {
           setWhatsappConnectOpen(false);
         } else {
           setWhatsappConnected(false);
-          if (data.state === "disconnected" && startRequested) {
-            setWhatsappConnecting(false);
-          }
+          setWhatsappConnecting(data.state === "starting");
         }
       } catch (error) {
         if (active) {
@@ -2775,7 +2773,7 @@ export default function Home() {
                             : "Scan WhatsApp QR"}
                       </h2>
                       <p>
-                        {whatsappState === "qr"
+                        {whatsappQr || whatsappState === "qr"
                           ? "WhatsApp on your phone → Linked devices → Link a device, then scan this live WhatsApp QR."
                           : whatsappState === "disconnected" && whatsappError
                             ? whatsappError
