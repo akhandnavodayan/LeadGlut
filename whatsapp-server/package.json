@@ -6,13 +6,14 @@
     "node": ">=22"
   },
   "scripts": {
-    "install:chrome": "puppeteer browsers install chrome",
+    "install:chrome": "PUPPETEER_CACHE_DIR=$PWD/.cache/puppeteer puppeteer browsers install chrome",
     "postinstall": "npm run install:chrome",
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.21.2",
     "firebase-admin": "^13.5.0",
+    "puppeteer": "^24.38.0",
     "qrcode": "^1.5.4",
     "whatsapp-web.js": "^1.34.7"
   }

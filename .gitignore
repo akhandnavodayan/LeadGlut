@@ -9,4 +9,5 @@ out/
 .wwebjs_auth/
 .wwebjs_cache/
 whatsapp-server/.wwebjs_auth/
+whatsapp-server/.cache/puppeteer/
 *.tsbuildinfo

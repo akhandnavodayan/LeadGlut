@@ -7,7 +7,11 @@ const express = require("express");
 const QRCode = require("qrcode");
 const { cert, getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
+process.env.PUPPETEER_CACHE_DIR = path.join(__dirname, ".cache", "puppeteer");
+const puppeteer = require("puppeteer");
 const { Client, LocalAuth } = require("whatsapp-web.js");
+const chromeExecutablePath =
+  process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath();
 
 const port = Number(process.env.PORT) || 10000;
 const apiKey = process.env.WHATSAPP_SERVER_API_KEY;
@@ -107,9 +111,7 @@ function createWhatsAppClient(uid) {
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
       ],
-      ...(process.env.PUPPETEER_EXECUTABLE_PATH
-        ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH }
-        : {}),
+      executablePath: chromeExecutablePath,
     },
   });
 
@@ -316,6 +318,9 @@ app.use((error, _request, response, _next) => {
 const server = app.listen(port, "0.0.0.0", () => {
   console.info(`WhatsApp service listening on port ${port}.`);
   console.info(`WhatsApp LocalAuth data path: ${authPath}`);
+  console.info(
+    `Puppeteer Chrome executable: ${chromeExecutablePath} (exists: ${fs.existsSync(chromeExecutablePath)}).`,
+  );
 });
 
 async function shutdown(signal) {
