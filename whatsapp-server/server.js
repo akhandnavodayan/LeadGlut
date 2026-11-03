@@ -9,9 +9,7 @@ const { cert, getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 process.env.PUPPETEER_CACHE_DIR = path.join(
   __dirname,
-  "node_modules",
-  ".cache",
-  "puppeteer",
+  "puppeteer-cache",
 );
 const puppeteer = require("puppeteer");
 const { Client, LocalAuth } = require("whatsapp-web.js");
