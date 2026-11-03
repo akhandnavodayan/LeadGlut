@@ -111,6 +111,7 @@ function createWhatsAppClient(uid) {
     const executablePath =
       process.env.PUPPETEER_EXECUTABLE_PATH || (await chromium.executablePath());
     const client = new Client({
+      authTimeoutMs: 120000,
       authStrategy: new RemoteAuth({
         clientId,
         dataPath: authPath,
