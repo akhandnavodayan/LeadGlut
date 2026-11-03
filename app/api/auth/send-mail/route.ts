@@ -81,18 +81,13 @@ export async function POST(request: NextRequest) {
       type === "reset"
         ? await auth.generatePasswordResetLink(email)
         : await auth.generateEmailVerificationLink(email);
-    let actionLink = firebaseLink;
-
-    if (type === "reset") {
-      const oobCode = new URL(firebaseLink).searchParams.get("oobCode");
-      if (!oobCode) throw new Error("Firebase did not return a password reset action code.");
-      const resetUrl = new URL(
-        "/reset-password",
-        process.env.APP_URL || "https://www.webglut.me",
-      );
-      resetUrl.searchParams.set("oobCode", oobCode);
-      actionLink = resetUrl.toString();
-    }
+    const actionLink =
+      type === "reset"
+        ? firebaseLink.replace(
+            "https://leadglut.firebaseapp.com/__/auth/action",
+            "https://www.webglut.me/reset-password",
+          )
+        : firebaseLink;
 
     const safeActionLink = escapeHtml(actionLink);
     const isReset = type === "reset";

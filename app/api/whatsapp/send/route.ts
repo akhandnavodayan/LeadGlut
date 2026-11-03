@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sendWhatsAppMessage } from "../../../../lib/whatsapp-web";
 import { requireUser } from "../../../../lib/api-auth";
 import { adminServices } from "../../../../lib/firebase-admin";
 import { enforceRateLimit } from "../../../../lib/rate-limit";
 import { recordSuspiciousActivity } from "../../../../lib/security-activity";
+
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
@@ -39,7 +40,37 @@ export async function POST(request: NextRequest) {
     });
     if (!reservation) throw new Error("Contact reservation failed.");
     try {
-      await sendWhatsAppMessage(user.uid, reservation, message);
+      const serverUrl = process.env.WHATSAPP_SERVER_URL?.trim().replace(/\/+$/, "");
+      const apiKey = process.env.WHATSAPP_SERVER_API_KEY;
+      if (!serverUrl || !apiKey) {
+        throw new Error("WhatsApp service is not configured on the server.");
+      }
+      const sendResponse = await fetch(`${serverUrl}/api/whatsapp/send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          userId: user.uid,
+          number: reservation,
+          message,
+        }),
+        signal: AbortSignal.timeout(55_000),
+      });
+      let sendResult: { error?: string };
+      try {
+        sendResult = (await sendResponse.json()) as { error?: string };
+      } catch {
+        throw new Error("WhatsApp service returned an invalid response.");
+      }
+      if (!sendResponse.ok) {
+        const error = new Error(sendResult.error || "WhatsApp message could not be sent.");
+        Object.assign(error, {
+          status: sendResponse.status === 409 ? 503 : sendResponse.status,
+        });
+        throw error;
+      }
       await savedRef.set({ contactedAt: new Date(), contactInProgress: false }, { merge: true });
     } catch (error) {
       await db.runTransaction(async (transaction) => {
@@ -60,7 +91,9 @@ export async function POST(request: NextRequest) {
       ? 409
       : message.includes("not registered") || message.includes("invalid")
         ? 400
-        : 500;
+        : error && typeof error === "object" && "status" in error && typeof error.status === "number"
+          ? error.status
+          : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }

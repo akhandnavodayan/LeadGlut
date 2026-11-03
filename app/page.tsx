@@ -388,7 +388,7 @@ export default function Home() {
                 ]);
               }
               const whatsappResponse = await fetch(
-                "/api/whatsapp/status?restore=1",
+                `${process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL}/api/whatsapp/status?restore=1`,
                 {
                   cache: "no-store",
                   headers: { Authorization: `Bearer ${token}` },
@@ -504,7 +504,7 @@ export default function Home() {
         const user = auth.currentUser;
         if (!user) return;
         const token = await user.getIdToken();
-        const response = await fetch("/api/whatsapp/status?restore=1", {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL}/api/whatsapp/status?restore=1`, {
           cache: "no-store",
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -932,7 +932,7 @@ export default function Home() {
           throw new Error("Please sign in again before connecting WhatsApp.");
         const token = await user.getIdToken();
         const response = await fetch(
-          `/api/whatsapp/status${startRequested ? "" : "?start=1"}`,
+          `${process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL}/api/whatsapp/status${startRequested ? "" : "?start=1"}`,
           {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
@@ -2828,7 +2828,7 @@ export default function Home() {
                             const user = auth.currentUser;
                             if (user) {
                               void user.getIdToken().then((token) =>
-                                fetch("/api/whatsapp/status?retry=1&start=1", {
+                                fetch(`${process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL}/api/whatsapp/status?retry=1&start=1`, {
                                   cache: "no-store",
                                   headers: { Authorization: `Bearer ${token}` },
                                 }),

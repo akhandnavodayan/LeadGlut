@@ -8,4 +8,5 @@ out/
 .DS_Store
 .wwebjs_auth/
 .wwebjs_cache/
+whatsapp-server/.wwebjs_auth/
 *.tsbuildinfo
