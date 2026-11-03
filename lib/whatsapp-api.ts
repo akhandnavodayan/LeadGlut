@@ -17,9 +17,49 @@ type StatusOptions = {
 function serviceUrl() {
   const value = process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL?.trim();
   if (!value) {
-    throw new Error("WhatsApp service is not configured.");
+    throw new Error(
+      "WhatsApp service URL is missing. Set NEXT_PUBLIC_WHATSAPP_SERVER_URL to your Render service URL and restart the app.",
+    );
+  }
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" &&
+      !(url.protocol === "http:" && url.hostname === "localhost")
+    ) {
+      throw new Error();
+    }
+  } catch {
+    throw new Error(
+      "NEXT_PUBLIC_WHATSAPP_SERVER_URL must be a valid HTTPS Render URL.",
+    );
   }
   return value.replace(/\/+$/, "");
+}
+
+async function readStatusResponse(response: Response): Promise<WhatsAppStatus> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      `WhatsApp service returned a non-JSON response (HTTP ${response.status}). Check that NEXT_PUBLIC_WHATSAPP_SERVER_URL points to the Render service URL.`,
+    );
+  }
+
+  let result: WhatsAppStatus;
+  try {
+    result = (await response.json()) as WhatsAppStatus;
+  } catch {
+    throw new Error("WhatsApp service returned invalid JSON.");
+  }
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(
+        "WhatsApp service rejected the sign-in token. Verify that Render uses Firebase project leadglut and matching Firebase Admin credentials, then sign in again.",
+      );
+    }
+    throw new Error(result.error || "WhatsApp status could not be loaded.");
+  }
+  return result;
 }
 
 export async function fetchWhatsAppStatus(
@@ -36,16 +76,7 @@ export async function fetchWhatsAppStatus(
     cache: "no-store",
     headers: { Authorization: `Bearer ${await user.getIdToken()}` },
   });
-  let result: WhatsAppStatus;
-  try {
-    result = (await response.json()) as WhatsAppStatus;
-  } catch {
-    throw new Error("WhatsApp service returned an invalid response.");
-  }
-  if (!response.ok) {
-    throw new Error(result.error || "WhatsApp status could not be loaded.");
-  }
-  return result;
+  return readStatusResponse(response);
 }
 
 export async function sendWhatsAppMessage(leadId: string, message: string) {

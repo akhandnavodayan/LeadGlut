@@ -25,6 +25,7 @@ import { AutoShowcase } from "../components/pages/AutoShowcase";
 import { ActionFeedback } from "../components/ActionFeedback";
 import { registerPushNotifications } from "../lib/push-notifications";
 import { sendCustomAuthEmail } from "../lib/custom-auth-email";
+import { fetchWhatsAppStatus } from "../lib/whatsapp-api";
 
 type View = "landing" | "dashboard";
 type Lead = {
@@ -387,23 +388,19 @@ export default function Home() {
                   ]),
                 ]);
               }
-              const whatsappResponse = await fetch(
-                `${process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL}/api/whatsapp/status?restore=1`,
-                {
-                  cache: "no-store",
-                  headers: { Authorization: `Bearer ${token}` },
-                },
-              );
-              if (whatsappResponse.ok) {
-                const whatsapp = (await whatsappResponse.json()) as {
-                  state?: string;
-                  error?: string | null;
-                };
+              try {
+                const whatsapp = await fetchWhatsAppStatus({ restore: true });
                 const ready = whatsapp.state === "ready";
                 setWhatsappState(whatsapp.state || "disconnected");
                 setWhatsappConnected(ready);
                 setWhatsappStatusReady(true);
                 if (whatsapp.error) setWhatsappError(whatsapp.error);
+              } catch (error) {
+                setWhatsappError(
+                  error instanceof Error
+                    ? error.message
+                    : "WhatsApp status could not be loaded.",
+                );
               }
             } catch {
               setPaymentError("Wallet data could not be loaded.");
@@ -501,19 +498,10 @@ export default function Home() {
     let active = true;
     const syncWhatsAppStatus = async () => {
       try {
-        const user = auth.currentUser;
-        if (!user) return;
-        const token = await user.getIdToken();
-        const response = await fetch(`${process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL}/api/whatsapp/status?restore=1`, {
-          cache: "no-store",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = (await response.json()) as {
-          state?: string;
-          error?: string | null;
-        };
+        if (!auth.currentUser) return;
+        const data = await fetchWhatsAppStatus({ restore: true });
         if (!active) return;
-        const ready = response.ok && data.state === "ready";
+        const ready = data.state === "ready";
         setWhatsappState(data.state || "disconnected");
         if (data.error) setWhatsappError(data.error);
         setWhatsappConnected(ready);
@@ -523,9 +511,14 @@ export default function Home() {
         } else {
           window.localStorage.removeItem("leadglut-whatsapp-connected");
         }
-      } catch {
+      } catch (error) {
         if (active) {
           setWhatsappStatusReady(true);
+          setWhatsappError(
+            error instanceof Error
+              ? error.message
+              : "WhatsApp status could not be loaded.",
+          );
         }
       }
     };
@@ -927,26 +920,9 @@ export default function Home() {
     let startRequested = false;
     const poll = async () => {
       try {
-        const user = auth.currentUser;
-        if (!user)
-          throw new Error("Please sign in again before connecting WhatsApp.");
-        const token = await user.getIdToken();
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL}/api/whatsapp/status${startRequested ? "" : "?start=1"}`,
-          {
-            cache: "no-store",
-            headers: { Authorization: `Bearer ${token}` },
-          },
-        );
+        const data = await fetchWhatsAppStatus({ start: !startRequested });
         startRequested = true;
-        const data = (await response.json()) as {
-          state?: string;
-          qrDataUrl?: string | null;
-          error?: string | null;
-        };
         if (!active) return;
-        if (!response.ok)
-          throw new Error(data.error || "WhatsApp could not start.");
         setWhatsappState(data.state || "disconnected");
         setWhatsappQr(data.qrDataUrl || null);
         setWhatsappError(data.error || "");
@@ -2825,15 +2801,23 @@ export default function Home() {
                           onClick={() => {
                             setWhatsappError("");
                             setWhatsappConnecting(true);
-                            const user = auth.currentUser;
-                            if (user) {
-                              void user.getIdToken().then((token) =>
-                                fetch(`${process.env.NEXT_PUBLIC_WHATSAPP_SERVER_URL}/api/whatsapp/status?retry=1&start=1`, {
-                                  cache: "no-store",
-                                  headers: { Authorization: `Bearer ${token}` },
-                                }),
-                              );
-                            }
+                            void fetchWhatsAppStatus({
+                              retry: true,
+                              start: true,
+                            })
+                              .then((data) => {
+                                setWhatsappState(data.state || "disconnected");
+                                setWhatsappQr(data.qrDataUrl || null);
+                                setWhatsappError(data.error || "");
+                              })
+                              .catch((error: unknown) => {
+                                setWhatsappConnecting(false);
+                                setWhatsappError(
+                                  error instanceof Error
+                                    ? error.message
+                                    : "WhatsApp could not start.",
+                                );
+                              });
                           }}
                         >
                           Try again <span>→</span>

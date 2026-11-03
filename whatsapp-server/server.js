@@ -69,8 +69,24 @@ async function authenticatedUid(request) {
     error.status = 401;
     throw error;
   }
-  const decoded = await firebaseAuth.verifyIdToken(token);
-  return decoded.uid;
+  try {
+    const decoded = await firebaseAuth.verifyIdToken(token);
+    return decoded.uid;
+  } catch (error) {
+    const code = error?.code;
+    console.warn(
+      "WhatsApp Firebase token verification failed:",
+      code || error?.name || "unknown error",
+    );
+    const verificationError = new Error(
+      typeof code === "string" && code.startsWith("auth/")
+        ? "Authentication failed."
+        : "Firebase token verification is temporarily unavailable.",
+    );
+    verificationError.status =
+      typeof code === "string" && code.startsWith("auth/") ? 401 : 503;
+    throw verificationError;
+  }
 }
 
 function createWhatsAppClient(uid) {
@@ -237,9 +253,14 @@ app.get("/api/whatsapp/status", async (request, response) => {
       error: runtime.error || null,
     });
   } catch (error) {
-    const status = Number(error?.status) || 401;
+    const status = Number(error?.status) || 500;
     return response.status(status).json({
-      error: status === 401 ? "Authentication failed." : "WhatsApp status could not be loaded.",
+      error:
+        status === 401
+          ? "Authentication failed."
+          : status === 503
+            ? "Firebase token verification is temporarily unavailable."
+            : "WhatsApp status could not be loaded.",
     });
   }
 });
