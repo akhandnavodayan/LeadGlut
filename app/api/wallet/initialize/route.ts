@@ -11,15 +11,33 @@ export async function POST(request: NextRequest) {
     const ref = db.collection("users").doc(user.uid);
     const initialization = await db.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(ref);
+      const welcomeBonusRef = ref.collection("transactions").doc("welcome_bonus");
+      const bonusSnapshot = await transaction.get(welcomeBonusRef);
+      const current = snapshot.data() || {};
+      const shouldGrantBonus = !bonusSnapshot.exists
+        && current.bonusGranted !== true
+        && current.walletBalance == null;
       if (snapshot.exists) {
-        const profileUpdate: Record<string, unknown> = { updatedAt: new Date() };
+        const profileUpdate: Record<string, unknown> = {
+          updatedAt: new Date(),
+          ...(shouldGrantBonus
+            ? { walletBalance: welcomeBonus, bonusGranted: true }
+            : {}),
+        };
         if (user.email) profileUpdate.email = user.email;
         if (user.name) profileUpdate.displayName = user.name;
         transaction.set(ref, profileUpdate, { merge: true });
+        if (shouldGrantBonus) {
+          transaction.set(welcomeBonusRef, {
+            type: "welcome_bonus",
+            amount: welcomeBonus,
+            createdAt: new Date(),
+          });
+        }
         return {
-          balance: Number(snapshot.data()?.walletBalance ?? 0),
-          bonusGranted: Boolean(snapshot.data()?.bonusGranted),
-          created: false,
+          balance: shouldGrantBonus ? welcomeBonus : Number(current.walletBalance ?? 0),
+          bonusGranted: shouldGrantBonus || current.bonusGranted === true,
+          created: shouldGrantBonus,
         };
       }
       const now = new Date();
@@ -31,7 +49,7 @@ export async function POST(request: NextRequest) {
         createdAt: now,
         updatedAt: now,
       });
-      transaction.set(ref.collection("transactions").doc("welcome_bonus"), {
+      transaction.set(welcomeBonusRef, {
         type: "welcome_bonus",
         amount: welcomeBonus,
         createdAt: now,

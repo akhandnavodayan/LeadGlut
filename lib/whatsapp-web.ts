@@ -1,11 +1,12 @@
 import path from "node:path";
+import mongoose from "mongoose";
+import { MongoStore } from "wwebjs-mongo";
 import type { Client as WhatsAppClient } from "whatsapp-web.js";
+import { Client, RemoteAuth } from "whatsapp-web.js";
 
 // Avoid incompatible optional native websocket modules in server environments.
 process.env.WS_NO_BUFFER_UTIL ??= "1";
 process.env.WS_NO_UTF_8_VALIDATE ??= "1";
-
-const { Client, LocalAuth } = require("whatsapp-web.js") as typeof import("whatsapp-web.js");
 
 type WhatsAppState = "starting" | "qr" | "authenticated" | "ready" | "disconnected";
 
@@ -20,6 +21,7 @@ type WhatsAppRuntime = {
 
 const runtimeHost = globalThis as typeof globalThis & {
   __leadglutWhatsAppRuntimes?: Map<string, WhatsAppRuntime>;
+  __leadglutWhatsAppStore?: Promise<InstanceType<typeof MongoStore>>;
 };
 const runtimes = runtimeHost.__leadglutWhatsAppRuntimes ?? new Map<string, WhatsAppRuntime>();
 runtimeHost.__leadglutWhatsAppRuntimes = runtimes;
@@ -44,8 +46,25 @@ function getSessionId(userId: string) {
   return userId.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
-export function getWhatsAppSessionPath(userId: string) {
-  return path.join(process.cwd(), ".wwebjs_auth", `session-leadglut-${getSessionId(userId)}`);
+function getMongoStore() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error("MONGODB_URI is required to persist WhatsApp sessions.");
+  if (!runtimeHost.__leadglutWhatsAppStore) {
+    runtimeHost.__leadglutWhatsAppStore = mongoose.connect(uri, {
+      dbName: process.env.MONGODB_DB || "leadglut",
+    })
+      .then(() => new MongoStore({ mongoose }))
+      .catch((error: unknown) => {
+        runtimeHost.__leadglutWhatsAppStore = undefined;
+        throw error;
+      });
+  }
+  return runtimeHost.__leadglutWhatsAppStore;
+}
+
+export async function hasWhatsAppSession(userId: string) {
+  const store = await getMongoStore();
+  return store.sessionExists({ session: `RemoteAuth-leadglut-${getSessionId(userId)}` });
 }
 
 async function initializeClient(client: WhatsAppClient) {
@@ -57,14 +76,17 @@ async function initializeClient(client: WhatsAppClient) {
   ]);
 }
 
-function getClient(userId: string, runtime: WhatsAppRuntime) {
+async function getClient(userId: string, runtime: WhatsAppRuntime) {
   if (runtime.client) return runtime.client;
 
   const sessionId = getSessionId(userId);
+  const store = await getMongoStore();
   runtime.client = new Client({
-    authStrategy: new LocalAuth({
+    authStrategy: new RemoteAuth({
+      store,
       clientId: `leadglut-${sessionId}`,
       dataPath: path.join(process.cwd(), ".wwebjs_auth"),
+      backupSyncIntervalMs: 5 * 60 * 1000,
     }),
     puppeteer: { headless: true },
   });
@@ -100,6 +122,9 @@ function getClient(userId: string, runtime: WhatsAppRuntime) {
 }
 
 export async function startWhatsApp(userId: string) {
+  if (process.env.VERCEL) {
+    throw new Error("WhatsApp QR sessions require a persistent server. Vercel serverless storage is not writable or persistent.");
+  }
   const runtime = getRuntime(userId);
   if (runtime.state === "ready" || runtime.state === "qr" || runtime.state === "starting" || runtime.state === "authenticated") return;
   if (runtime.initializationError && Date.now() - runtime.lastInitializationFailure < retryCooldownMs) {
@@ -107,14 +132,17 @@ export async function startWhatsApp(userId: string) {
   }
   if (!runtime.startPromise) {
     runtime.state = "starting";
-    const client = getClient(userId, runtime);
-    runtime.startPromise = initializeClient(client).catch((error: unknown) => {
+    runtime.startPromise = (async () => {
+      const client = await getClient(userId, runtime);
+      await initializeClient(client);
+    })().catch((error: unknown) => {
       runtime.state = "disconnected";
       runtime.initializationError = error instanceof Error ? error.message : "WhatsApp initialization failed.";
       runtime.lastInitializationFailure = Date.now();
       runtime.startPromise = undefined;
+      const client = runtime.client;
       runtime.client = undefined;
-      void client.destroy().catch(() => undefined);
+      if (client) void client.destroy().catch(() => undefined);
       throw error;
     });
   }
@@ -122,18 +150,28 @@ export async function startWhatsApp(userId: string) {
 }
 
 export function startWhatsAppInBackground(userId: string) {
+  if (process.env.VERCEL) {
+    const runtime = getRuntime(userId);
+    runtime.state = "disconnected";
+    runtime.initializationError = "WhatsApp QR sessions require a persistent server. Vercel serverless storage is not writable or persistent.";
+    runtime.lastInitializationFailure = Date.now();
+    return;
+  }
   const runtime = getRuntime(userId);
   if (runtime.state === "ready" || runtime.state === "qr" || runtime.state === "starting" || runtime.state === "authenticated") return;
   if (runtime.initializationError && Date.now() - runtime.lastInitializationFailure < retryCooldownMs) return;
   runtime.state = "starting";
-  const client = getClient(userId, runtime);
-  runtime.startPromise = initializeClient(client).catch((error: unknown) => {
+  runtime.startPromise = (async () => {
+    const client = await getClient(userId, runtime);
+    await initializeClient(client);
+  })().catch((error: unknown) => {
     runtime.state = "disconnected";
     runtime.initializationError = error instanceof Error ? error.message : "WhatsApp initialization failed.";
     runtime.lastInitializationFailure = Date.now();
     runtime.startPromise = undefined;
+    const client = runtime.client;
     runtime.client = undefined;
-    void client.destroy().catch(() => undefined);
+    if (client) void client.destroy().catch(() => undefined);
     console.error("WhatsApp initialization failed:", runtime.initializationError);
   });
 }
@@ -166,7 +204,7 @@ export async function sendWhatsAppMessage(userId: string, phone: string, message
       ? digits
       : digits;
   if (!/^91[6-9]\d{9}$/.test(normalized)) throw new Error("Lead phone number is invalid. Use a valid Indian mobile number.");
-  const client = getClient(userId, runtime);
+  const client = await getClient(userId, runtime);
   const numberId = await client.getNumberId(normalized);
   if (!numberId) throw new Error("This lead number is not registered on WhatsApp.");
   await client.sendMessage(numberId._serialized, message);

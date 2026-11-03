@@ -43,7 +43,7 @@ export async function requireUser(request: NextRequest) {
     : data.lastActiveAt
       ? new Date(data.lastActiveAt)
       : null;
-  if (!lastActiveAt || Date.now() - lastActiveAt.getTime() >= 5 * 60 * 1000) {
+  if (snapshot.exists && (!lastActiveAt || Date.now() - lastActiveAt.getTime() >= 5 * 60 * 1000)) {
     await db.collection("users").doc(user.uid).set({ lastActiveAt: new Date() }, { merge: true });
   }
   return user;

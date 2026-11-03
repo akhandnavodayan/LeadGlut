@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "node:fs";
 import QRCode from "qrcode";
-import { getWhatsAppSessionPath, getWhatsAppState, resetWhatsAppRuntime, startWhatsAppInBackground } from "../../../../lib/whatsapp-web";
+import { getWhatsAppState, hasWhatsAppSession, resetWhatsAppRuntime, startWhatsAppInBackground } from "../../../../lib/whatsapp-web";
 import { requireUser } from "../../../../lib/api-auth";
 
 export const dynamic = "force-dynamic";
@@ -9,9 +8,16 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   try {
     const user = await requireUser(request);
-    const sessionPath = getWhatsAppSessionPath(user.uid);
+    if (process.env.VERCEL) {
+      return NextResponse.json({
+        state: "disconnected",
+        sessionExists: false,
+        qrDataUrl: null,
+        error: "WhatsApp QR sessions require a persistent server. Vercel serverless storage is not writable or persistent.",
+      }, { status: 503 });
+    }
     const shouldRestore = request.nextUrl.searchParams.get("restore") === "1"
-      && fs.existsSync(sessionPath);
+      && await hasWhatsAppSession(user.uid);
     if (request.nextUrl.searchParams.get("retry") === "1") {
       await resetWhatsAppRuntime(user.uid);
     }
@@ -21,7 +27,7 @@ export async function GET(request: NextRequest) {
     const status = getWhatsAppState(user.uid);
     return NextResponse.json({
       state: status.state,
-      sessionExists: fs.existsSync(sessionPath),
+      sessionExists: shouldRestore,
       qrDataUrl: status.qr ? await QRCode.toDataURL(status.qr) : null,
       error: status.error,
     });
