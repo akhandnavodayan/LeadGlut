@@ -30,7 +30,11 @@ export async function POST(request: NextRequest) {
     }
     const paymentId = body.razorpay_payment_id;
     const orderId = body.razorpay_order_id;
-    const razorpay = new Razorpay({ key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID!, key_secret: secret });
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    if (!keyId) {
+      return NextResponse.json({ error: "Razorpay is not configured on the server." }, { status: 503 });
+    }
+    const razorpay = new Razorpay({ key_id: keyId, key_secret: secret });
     const order = await razorpay.orders.fetch(orderId);
     if (order.notes?.firebaseUid !== user.uid) return NextResponse.json({ error: "Payment order does not belong to this user." }, { status: 403 });
     const payment = await razorpay.payments.fetch(paymentId);

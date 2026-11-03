@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     const couponApplied = Boolean(coupon);
     const discount = coupon ? Math.floor(amount * Number(coupon.discountPercent ?? 0) / 100) : 0;
     const payableAmount = Math.max(1, amount - discount);
-    const keyId = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+    const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
     if (!keyId || !keySecret) {
       return NextResponse.json({ error: "Razorpay is not configured on the server." }, { status: 503 });
