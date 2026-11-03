@@ -6,15 +6,17 @@ const path = require("node:path");
 const express = require("express");
 const QRCode = require("qrcode");
 const chromium = require("@sparticuz/chromium").default;
+const mongoose = require("mongoose");
 const { cert, getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, RemoteAuth } = require("whatsapp-web.js");
+const { MongoStore } = require("wwebjs-mongo");
 
 const port = Number(process.env.PORT) || 10000;
 const apiKey = process.env.WHATSAPP_SERVER_API_KEY;
-const authPath = path.resolve(
-  process.env.WHATSAPP_AUTH_PATH || path.join(__dirname, ".wwebjs_auth"),
-);
+const mongoUri = process.env.MONGODB_URI;
+const mongoDb = process.env.MONGODB_DB || "leadglut";
+const authPath = process.cwd();
 const allowedOrigins = (process.env.FRONTEND_ORIGINS || "https://www.webglut.me")
   .split(",")
   .map((origin) => origin.trim())
@@ -22,6 +24,9 @@ const allowedOrigins = (process.env.FRONTEND_ORIGINS || "https://www.webglut.me"
 
 if (!apiKey || apiKey.length < 32) {
   throw new Error("WHATSAPP_SERVER_API_KEY must be configured with at least 32 characters.");
+}
+if (!mongoUri) {
+  throw new Error("MONGODB_URI is required to persist WhatsApp sessions.");
 }
 
 const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -44,6 +49,7 @@ const firebaseApp =
     credential: cert({ projectId, clientEmail, privateKey }),
   });
 const firebaseAuth = getAuth(firebaseApp);
+const mongoStore = new MongoStore({ mongoose });
 const clients = new Map();
 
 fs.mkdirSync(authPath, { recursive: true });
@@ -53,8 +59,8 @@ function sessionClientId(uid) {
   return `leadglut-${hash}`;
 }
 
-function sessionPath(uid) {
-  return path.join(authPath, `session-${sessionClientId(uid)}`);
+function remoteSessionName(uid) {
+  return `RemoteAuth-${sessionClientId(uid)}`;
 }
 
 function getBearerToken(request) {
@@ -105,7 +111,12 @@ function createWhatsAppClient(uid) {
     const executablePath =
       process.env.PUPPETEER_EXECUTABLE_PATH || (await chromium.executablePath());
     const client = new Client({
-      authStrategy: new LocalAuth({ clientId, dataPath: authPath }),
+      authStrategy: new RemoteAuth({
+        clientId,
+        dataPath: authPath,
+        store: mongoStore,
+        backupSyncIntervalMs: 5 * 60 * 1000,
+      }),
       puppeteer: {
         headless: true,
         args: [
@@ -140,6 +151,9 @@ function createWhatsAppClient(uid) {
       runtime.qrDataUrl = null;
       runtime.error = null;
       console.info(`WhatsApp session ready for ${clientId}.`);
+    });
+    client.on("remote_session_saved", () => {
+      console.info(`WhatsApp session backup saved to MongoDB for ${clientId}.`);
     });
     client.on("auth_failure", (message) => {
       runtime.state = "disconnected";
@@ -221,8 +235,10 @@ app.get("/api/whatsapp/status", async (request, response) => {
     }
 
     let runtime = clients.get(uid);
-    const shouldRestore =
-      request.query.restore === "1" && fs.existsSync(sessionPath(uid));
+    const hasRemoteSession = await mongoStore.sessionExists({
+      session: remoteSessionName(uid),
+    });
+    const shouldRestore = request.query.restore === "1" && hasRemoteSession;
     if (
       request.query.start === "1" ||
       request.query.retry === "1" ||
@@ -254,7 +270,7 @@ app.get("/api/whatsapp/status", async (request, response) => {
             : state === "disconnected"
               ? "disconnected"
               : "starting",
-      sessionExists: fs.existsSync(sessionPath(uid)),
+      sessionExists: hasRemoteSession,
       qrDataUrl: runtime.qrDataUrl || null,
       error: runtime.error || null,
     });
@@ -319,15 +335,23 @@ app.use((error, _request, response, _next) => {
   return response.status(500).json({ error: "Internal server error." });
 });
 
-const server = app.listen(port, "0.0.0.0", () => {
-  console.info(`WhatsApp service listening on port ${port}.`);
-  console.info(`WhatsApp LocalAuth data path: ${authPath}`);
-  console.info("WhatsApp sessions will use the bundled Chromium binary.");
-});
+let server;
+
+async function startServer() {
+  await mongoose.connect(mongoUri, { dbName: mongoDb });
+  console.info("WhatsApp session store connected to MongoDB.");
+  server = app.listen(port, "0.0.0.0", () => {
+    console.info(`WhatsApp service listening on port ${port}.`);
+    console.info("WhatsApp sessions are backed up to MongoDB.");
+    console.info("WhatsApp sessions will use the bundled Chromium binary.");
+  });
+}
 
 async function shutdown(signal) {
   console.info(`${signal} received; closing WhatsApp sessions.`);
-  server.close();
+  if (server) {
+    await new Promise((resolve) => server.close(resolve));
+  }
   await Promise.all(
     [...clients.values()].map((runtime) =>
       runtime.initialization
@@ -337,8 +361,15 @@ async function shutdown(signal) {
         }),
     ),
   );
+  await mongoose.disconnect();
   process.exit(0);
 }
+
+startServer().catch(async (error) => {
+  console.error("WhatsApp service startup failed:", error);
+  await mongoose.disconnect();
+  process.exitCode = 1;
+});
 
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
