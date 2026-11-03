@@ -6,8 +6,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "install:chrome": "PUPPETEER_CACHE_DIR=$PWD/.cache/puppeteer puppeteer browsers install chrome",
-    "postinstall": "npm run install:chrome",
+    "install:chrome": "PUPPETEER_CACHE_DIR=$PWD/node_modules/.cache/puppeteer puppeteer browsers install chrome",
+    "verify:chrome": "PUPPETEER_CACHE_DIR=$PWD/node_modules/.cache/puppeteer node -e \"const fs=require('node:fs');const p=require('puppeteer');const executable=p.executablePath();console.log('Chrome executable:',executable);if(!fs.existsSync(executable)){console.error('Chrome installation is missing.');process.exit(1)}\"",
+    "postinstall": "npm run install:chrome && npm run verify:chrome",
     "start": "node server.js"
   },
   "dependencies": {
