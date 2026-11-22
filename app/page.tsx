@@ -261,6 +261,20 @@ export default function Home() {
   const autoDiscoveryRunningRef = useRef(false);
 
   useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("auth") !== "signin") return;
+
+    setAuthMode("signin");
+    setAuthOpen(true);
+    url.searchParams.delete("auth");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, []);
+
+  useEffect(() => {
     const savedNav = window.localStorage.getItem("leadglut-active-nav");
     if (savedNav && [...navItems, "Settings"].includes(savedNav))
       setActiveNav(savedNav);
