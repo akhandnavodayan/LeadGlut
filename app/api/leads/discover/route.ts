@@ -3,7 +3,8 @@ import dns from "node:dns/promises";
 import fs from "node:fs";
 import net from "node:net";
 import { NextRequest, NextResponse } from "next/server";
-import puppeteer, { type Browser } from "puppeteer";
+import chromium from "@sparticuz/chromium";
+import puppeteer, { type Browser } from "puppeteer-core";
 import { requireUser } from "../../../../lib/api-auth";
 import { adminServices } from "../../../../lib/firebase-admin";
 import { enforceRateLimit } from "../../../../lib/rate-limit";
@@ -170,6 +171,29 @@ function getChromePath() {
     process.env.CHROME_EXECUTABLE_PATH || "",
   ];
   return candidates.find((candidate) => candidate && fs.existsSync(candidate));
+}
+
+async function launchBrowser(): Promise<Browser> {
+  const executablePath = getChromePath();
+  if (executablePath) {
+    return puppeteer.launch({
+      headless: true,
+      executablePath,
+      args: ["--disable-gpu"],
+    });
+  }
+  if (process.platform !== "linux" || process.arch !== "x64") {
+    throw new Error("Chrome was not found. Install Chrome or set CHROME_EXECUTABLE_PATH.");
+  }
+
+  return puppeteer.launch({
+    args: await puppeteer.defaultArgs({
+      args: [...chromium.args, "--disable-gpu"],
+      headless: "shell",
+    }),
+    executablePath: await chromium.executablePath(),
+    headless: "shell",
+  });
 }
 
 function setJob(update: Partial<DiscoveryJob>) {
@@ -340,12 +364,7 @@ function nameForError(error: unknown) {
 async function runDiscovery(job: DiscoveryJob, searches: Search[], leadPrice: number, automation?: { dailyLimit: number; day: string }) {
   let browser: Browser | undefined;
   try {
-    const executablePath = getChromePath();
-    browser = await puppeteer.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-      args: ["--disable-gpu"],
-    });
+    browser = await launchBrowser();
     for (const search of searches) {
       if (job.found >= job.target) break;
       await runSearch({ ...search, limit: Math.min(search.limit, job.target - job.found) }, job, browser, leadPrice, automation);
